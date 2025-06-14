@@ -1,0 +1,23 @@
+[tool.poetry]
+name = "gpt2"
+version = "0.1.0"
+description = ""
+authors = ["hula chen"]
+readme = "README.md"
+package-mode = false
+
+[tool.poetry.dependencies]
+python = ">=3.11"
+transformers = ">=4.51.3,<5.0.0"
+matplotlib = "^3.10.3"
+torch = { version = "2.7.0+cu126", source = "torch-cu126"}
+
+
+[[tool.poetry.source]]
+name = "torch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+priority = "explicit"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
