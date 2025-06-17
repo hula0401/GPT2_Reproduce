@@ -4,7 +4,8 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
-# -----------------
+# -----------------------------------------------------------------------------------------------------------
+
 batch_size = 64
 block_size = 256
 max_iters =500
@@ -28,7 +29,7 @@ class CausalSelfAttention(nn.Module):
                              .view(1, 1, config.block_size, config.block_size))
 
     def forward(self, x):
-        B, T, C = x.size # batch size, sequence length and embd_dimensions
+        B, T, C = x.size() # batch size, sequence length and embd_dimensions
         qkv = self.c_attn(x)
         q, k, v = qkv.split(self.n_embd, dim=2)
         k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
@@ -36,7 +37,7 @@ class CausalSelfAttention(nn.Module):
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
 
         att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
-        att = att.masked_fill(self.bias[:,:,:T,:T], float('-inf'))
+        att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
         att = F.softmax(att, dim=-1)
         y = att @ v
         y = y.transpose(1, 2).contiguous().view(B, T, C)
@@ -158,5 +159,41 @@ class GPT(nn.Module):
 
         return model
 
-model = GPT.from_pretrained('gpt2')
-print('it works!')
+# -----------------------------------------------------------------------------------------------------------
+#model = GPT.from_pretrained('gpt2')
+#print('it works!')
+# -----------------------------------------------------------------------------------------------------------
+
+num_return_sequences = 5
+max_length = 30
+
+#model = GPT.from_pretrained('gpt2')
+model = GPT(GPTConfig())
+model.eval()
+model.to('cuda')
+
+import tiktoken
+enc = tiktoken.get_encoding("gpt2")
+tokens = enc.encode("Hello, I'm a language model,")
+tokens = torch.tensor(tokens, dtype=torch.long)
+tokens = tokens.unsqueeze(0).repeat(num_return_sequences, 1)
+x = tokens.to('cuda')
+
+# generate what's next after the last token
+torch.manual_seed(42)
+torch.cuda.manual_seed(42)
+while x.size(1) < max_length:
+    with torch.no_grad(): # not count backward pass
+        logits = model(x)
+        logits = logits[:,-1,:]
+        probs = F.softmax(logits, dim=-1)
+        # top k sampling of 50, sampling only happen in top 50 to avoid werid tokens
+        topk_probs, topk_indices = torch.topk(probs, 50, dim=-1)
+        ix = torch.multinomial(topk_probs, num_samples=1)
+        xcol = torch.gather(topk_indices, dim=-1, index=ix)
+        x = torch.cat((x, xcol), dim=1)
+        # this will generate 5x30
+for i in range(num_return_sequences):
+    tokens = x[i, :max_length].tolist()
+    decoded = enc.decode(tokens)
+    print(">", decoded)
