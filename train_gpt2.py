@@ -96,6 +96,7 @@ class GPT(nn.Module):
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 
     def forward(self, idx):
+        # idx is of shape (B, T), T-long sequences of tokens and B-batch of independent samples
         B, T = idx.size()
         assert T <= self.config.block_size, f"Cannot forward sequence of length {T}, block size is only {self.config.block_size}"
 
@@ -163,15 +164,36 @@ class GPT(nn.Module):
 #model = GPT.from_pretrained('gpt2')
 #print('it works!')
 # -----------------------------------------------------------------------------------------------------------
+device = "cpu"
+if torch.cuda.is_available():
+    device = "cuda"
+elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+    device = "mps"
+print(f"using device: {device}")
+
+import tiktoken
+enc = tiktoken.get_encoding("gpt2")
+with open("data/tinyshakespeare.txt", "r") as f:
+    text = f.read()
+text = text[:1000]
+tokens = enc.encode(text)
+B,T = 4,32
+buf = torch.tensor(tokens[:B*T+1])
+x = buf[:-1].view(B,T)
+y = buf[1:].view(B,T)
+
 
 num_return_sequences = 5
 max_length = 30
 
 #model = GPT.from_pretrained('gpt2')
 model = GPT(GPTConfig())
-model.eval()
-model.to('cuda')
+#model.eval() # set to evaluation mode
+model.to(device)
 
+
+# -----------------------------------------------------------------------------------------------------------
+# for model testing
 import tiktoken
 enc = tiktoken.get_encoding("gpt2")
 tokens = enc.encode("Hello, I'm a language model,")
@@ -197,3 +219,4 @@ for i in range(num_return_sequences):
     tokens = x[i, :max_length].tolist()
     decoded = enc.decode(tokens)
     print(">", decoded)
+# -----------------------------------------------------------------------------------------------------------
