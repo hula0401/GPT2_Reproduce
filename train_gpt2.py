@@ -99,7 +99,7 @@ class GPT(nn.Module):
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 
         # weight sharing scheme
-        self.transfromer.wte.weight = self.lm_head.weight
+        self.transformer.wte.weight = self.lm_head.weight
         self.apply(self._init_weights)
 
     def _init_weights(self, module):
@@ -208,7 +208,8 @@ class DataloaderLite:
         x = buf[:-1].view(B,T)
         y = buf[1:].view(B,T)
         self.current_postion += B*T
-        if self.current_postion >= len(self.tokens):
+        # met problem that the last batch is not complete, so add another B*T
+        if self.current_postion+B*T+1 > len(self.tokens):
             self.current_postion = 0
         return x,y
 
@@ -217,6 +218,8 @@ class DataloaderLite:
 #model = GPT.from_pretrained('gpt2')
 #print('it works!')
 # -----------------------------------------------------------------------------------------------------------
+import time
+
 device = "cpu"
 if torch.cuda.is_available():
     device = "cuda"
@@ -228,21 +231,32 @@ torch.manual_seed(1337)
 if device == "cuda":
     torch.cuda.manual_seed(1337)
 
-train_loader = DataloaderLite(B=4, T=32)
+train_loader = DataloaderLite(B=16, T=512)
+
+#torch.set_float32_matmul_precision('high') # this is optional for A100
 
 model = GPT(GPTConfig())
 model.to(device)
+#model = torch.compile(model)
 
 # optimizer
 optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
 for i in range(50):
+    t0 = time.time()
     x, y = train_loader.next_batch()
     x, y = x.to(device), y.to(device)
     optimizer.zero_grad()
-    logits, loss = model(x, y)
+
+    with torch.autocast(device_type=device, dtype=torch.bfloat16):
+    # softmax, layernorm, adam... are set to BF16 while others are still TF32
+        logits, loss = model(x, y)
+        #import code; code.interact(local=locals()) # print logits.dtype --> get 'torch.float32'
     loss.backward()
     optimizer.step()
-    print(f"Step{i}, loss: {loss.item()}")
+    torch.cuda.synchronize()
+    t1 = time.time()
+    dt = (t1 - t0) * 1000
+    print(f"Step{i}, loss: {loss.item()}, time: {dt}ms")
 
 
 
