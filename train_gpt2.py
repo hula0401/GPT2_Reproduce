@@ -38,10 +38,14 @@ class CausalSelfAttention(nn.Module):
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
 
-        att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
-        att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
-        att = F.softmax(att, dim=-1)
-        y = att @ v
+        # flash attention
+        #att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
+        #att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
+        #att = F.softmax(att, dim=-1)
+        #y = att @ v
+
+        y = F.scaled_dot_product_attention(q,k,v, is_causal=True)
+
         y = y.transpose(1, 2).contiguous().view(B, T, C)
         y = self.c_proj(y)
         return y
@@ -235,9 +239,9 @@ train_loader = DataloaderLite(B=16, T=512)
 
 #torch.set_float32_matmul_precision('high') # this is optional for A100
 
-model = GPT(GPTConfig())
+model = GPT(GPTConfig(vocab_size = 50304))
 model.to(device)
-#model = torch.compile(model)
+model = torch.compile(model)
 
 # optimizer
 optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)

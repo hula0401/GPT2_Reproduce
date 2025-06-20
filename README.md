@@ -9,6 +9,10 @@ Before training:
 > Hello, I'm a language model, detectordisc Wiz separates Franz Leone vicious desertSETasis lur Dres sensitivity Pants CAN757 identifiable Shapiro spontEnglish overwhelminglyConn
 > Hello, I'm a language model,book 978Ins challenging Cemetery Qinants adoptedometimes aquatic Discipline unbeaten flakes wasting015 br HobbitMaterials outer rive Garrett venues
 
+## improvements
+for faster training:
+1. Add compiler
+2. Include Flash Attention
 
 ## dataset
 https://github.com/karpathy/char-rnn/blob/master/data/tinyshakespeare/input.txt
