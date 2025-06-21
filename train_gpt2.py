@@ -185,6 +185,16 @@ class GPT(nn.Module):
                     sd[k].copy_(sd_hf[k])
 
         return model
+    
+    def configure_optimizers(self, weight_decay, learning_rate, device):
+        param_dict = {pn: p for pn, p in self.named_parameters()}
+        param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
+        decay_params = [p for p in param_dict.values() if p.dim() >= 2]
+        nodecay_params = [p for p in param_dict.values() if p.dim() < 2]
+        optim_groups = [
+            {"params": [p for p in decay_params], "weight_decay": weight_decay},
+        ]
+        
 
 # -----------------------------------------------------------------------------------------------------------
 import tiktoken
@@ -243,24 +253,47 @@ model = GPT(GPTConfig(vocab_size = 50304))
 model.to(device)
 model = torch.compile(model)
 
+max_lr = 3e-4
+min_lr = max_lr * 0.1
+warmup_steps = 10
+max_steps = 50
+def get_lr(it):
+    if it < warmup_steps:
+        return max_lr * (it+1) / warmup_steps
+    if it > max_steps:
+        return min_lr
+    decay_ratio = (it - warmup_steps) / (max_steps - warmup_steps)
+    assert 0 <= decay_ratio <= 1
+    coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio)) # coeff starts at 1 and goes to 0
+    return min_lr + coeff * (max_lr - min_lr)
+
+
+
+
 # optimizer
-optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
-for i in range(50):
+optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, betas=(0.9, 0.95), eps=1e-8)
+for step in range(50):
     t0 = time.time()
     x, y = train_loader.next_batch()
     x, y = x.to(device), y.to(device)
     optimizer.zero_grad()
-
     with torch.autocast(device_type=device, dtype=torch.bfloat16):
     # softmax, layernorm, adam... are set to BF16 while others are still TF32
         logits, loss = model(x, y)
         #import code; code.interact(local=locals()) # print logits.dtype --> get 'torch.float32'
     loss.backward()
+    # the length of the gradient norm is no more than 0.1
+    norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+    lr = get_lr(step)
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = lr
     optimizer.step()
     torch.cuda.synchronize()
     t1 = time.time()
-    dt = (t1 - t0) * 1000
-    print(f"Step{i}, loss: {loss.item()}, time: {dt}ms")
+    dt = (t1 - t0)
+    tpkens_processed= train_loader.B*train_loader.T
+    tokens_per_sec = tpkens_processed / dt 
+    print(f"Step{step:4d} | loss: {loss.item():.6f} | norm: {norm:.4f} | time: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f}")
 
 
 

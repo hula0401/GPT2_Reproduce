@@ -13,6 +13,7 @@ Before training:
 for faster training:
 1. Add compiler
 2. Include Flash Attention
+3. Add dynamic learning rate (decay)
 
 ## dataset
 https://github.com/karpathy/char-rnn/blob/master/data/tinyshakespeare/input.txt
