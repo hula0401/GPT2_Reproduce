@@ -14,6 +14,7 @@ for faster training:
 1. Add compiler
 2. Include Flash Attention
 3. Add dynamic learning rate (decay)
+4. Add decay to >= 2 dimension parameters for AdamW optimizer
 
 ## dataset
 https://github.com/karpathy/char-rnn/blob/master/data/tinyshakespeare/input.txt
