@@ -3,6 +3,8 @@ import math
 import os
 import time
 import inspect
+import numpy as np
+import tiktoken
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
@@ -209,27 +211,51 @@ class GPT(nn.Module):
         return optimizer
 
 # -----------------------------------------------------------------------------------------------------------
-import tiktoken
+def load_tokens(filename):
+    npt = np.load(filename)
+    ptt = torch.tensor(npt, dtype = torch.long)
+    return ptt
 
 class DataloaderLite:
-    def __init__(self, B, T, process_rank, num_processes):
+    def __init__(self, B, T, process_rank, num_processes, split):
         self.B = B
         self.T = T
         self.process_rank = process_rank
         self.num_processes = num_processes
+        assert split in ['train', 'val']
 
-        with open("data/tinyshakespeare.txt", "r") as f:
-            text = f.read()
+        #with open("data/tinyshakespeare.txt", "r") as f:
+        #    text = f.read()
+        #    enc = tiktoken.get_encoding("gpt2")
+        #    tokens = enc.encode(text)
+        #    self.tokens = torch.tensor(tokens)
+        #    print(f"loaded tokens: {len(self.tokens)}")
+        #    print(f"1 epoch = {len(self.tokens) // (B*T)} batches")
+        #    self.current_postion = 0
 
-        enc = tiktoken.get_encoding("gpt2")
-        tokens = enc.encode(text)
-        self.tokens = torch.tensor(tokens)
+        #enc = tiktoken.get_encoding("gpt2")
+        #tokens = enc.encode(text)
+        #self.tokens = torch.tensor(tokens)
+        #print(f"loaded tokens: {len(self.tokens)}")
+        #print(f"1 epoch = {len(self.tokens) // (B*T)} batches")
+        #self.current_postion = self.B * self.T * self.process_rank
 
-        print(f"loaded tokens: {len(self.tokens)}")
-        print(f"1 epoch = {len(self.tokens) // (B*T)} batches")
+        data_root = "edu_fineweb10B"
+        shards = os.listdir(data_root)
+        shards = [s for s in shards if split in s]
+        shards = sorted(shards)
+        shards = [os.path.join(data_root, s) for s in shards]
+        self.shards = shards
+        assert len(shards) > 0, f"no shards found for split: {split}"
+        if master_process:
+            print(f"found {len(shards)} shards for split: {split}")
+        self.reset()
 
+    def reset(self):
+        self.current_shard = 0
+        self.tokens = load_tokens(self.shards[self.current_shard])
         self.current_postion = self.B * self.T * self.process_rank
-    
+
     def next_batch(self):
         B, T = self.B, self.T
         buf = self.tokens[self.current_postion:self.current_postion+B*T+1]
@@ -291,8 +317,9 @@ if master_process:
 #print("I am GPU", ddp_rank) # I am GPU 0
 #import sys; sys.exit(0)
 
-train_loader = DataloaderLite(B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size)
 
+train_loader = DataloaderLite(B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size, split = 'train')
+val_loader = DataloaderLite(B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size, split = 'val')
 #torch.set_float32_matmul_precision('high') # this is optional for A100
 
 model = GPT(GPTConfig(vocab_size = 50304))
@@ -306,8 +333,8 @@ raw_model = model.module if ddp else model
 
 max_lr = 3e-4
 min_lr = max_lr * 0.1
-warmup_steps = 10
-max_steps = 50
+warmup_steps = 143 # 375e6 / 2**9 = 715
+max_steps = 3814 # log2(524288) = 19, 10e9 / 2**19 = 19073
 def get_lr(it):
     if it < warmup_steps:
         return max_lr * (it+1) / warmup_steps
@@ -324,6 +351,27 @@ optimizer = model.configure_optimizers(weight_decay=0.1, learning_rate=6e-4, dev
 
 for step in range(50):
     t0 = time.time()
+
+    if step % 20 == 0: # 100
+        model.eval()
+        val_loader.reset()
+        with torch.no_grad():
+            val_loss_accum = 0.0
+            val_loss_steps = 20
+            for _ in range(val_loss_steps):
+                x, y = val_loader.next_batch()
+                x, y = x.to(device), y.to(device)
+                with torch.autocast(device_type=device, dtype=torch.bfloat16):
+                    logits, loss = model(x, y)
+                loss = loss / val_loss_steps
+                val_loss_accum += loss.detach()
+                val_loss_accum = val_loss_accum / val_loss_steps
+        if ddp:
+            dist.all_reduce(val_loss_accum, op=dist.ReduceOp.AVG)
+        if master_process:
+            print(f"Step{step:4d} | val_loss: {val_loss_accum.item():.4f}")
+    
+    model.train()
     optimizer.zero_grad()
     loss_accum = 0.0
     for micro_step in range(grad_accum_steps):
@@ -353,7 +401,7 @@ for step in range(50):
     tpkens_processed= train_loader.B * train_loader.T * grad_accum_steps * ddp_world_size
     tokens_per_sec = tpkens_processed / dt 
     if master_process:
-        print(f"Step{step:4d} | loss: {loss_accum.item():.6f} | norm: {norm:.4f} | time: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f}") 
+        print(f"Step{step:4d} | loss: {loss_accum.item():.6f} | lr: {lr:.4e} | norm: {norm:.4f} | time: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f}") 
 
 
 
