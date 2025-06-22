@@ -24,7 +24,7 @@ class CausalSelfAttention(nn.Module):
         assert config.n_embd % config.n_head == 0
         self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd)
         self.c_proj = nn.Linear(config.n_embd, config.n_embd)
-        self.c_proj.NANOGPT_SCALE_INIT = 1
+        self.c_proj.NANOGPT_SCALE_INIT = 1  # type: ignore
 
         self.n_head = config.n_head
         self.n_embd = config.n_embd
@@ -57,7 +57,7 @@ class MLP(nn.Module):
         self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd)
         self.gelu = nn.GELU(approximate='tanh')
         self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd)
-        self.c_proj.NANOGPT_SCALE_INIT = 1
+        self.c_proj.NANOGPT_SCALE_INIT = 1  # type: ignore
     
     def forward(self, x):
         x = self.c_fc(x)
@@ -104,7 +104,7 @@ class GPT(nn.Module):
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 
         # weight sharing scheme
-        self.transformer.wte.weight = self.lm_head.weight
+        self.transformer.wte.weight = self.lm_head.weight  # type: ignore
         self.apply(self._init_weights)
 
     def _init_weights(self, module):
@@ -125,12 +125,12 @@ class GPT(nn.Module):
         assert T <= self.config.block_size, f"Cannot forward sequence of length {T}, block size is only {self.config.block_size}"
 
         pos = torch.arange(0, T, dtype=torch.long, device=idx.device)
-        pos_embd = self.transformer.wpe(pos)
-        tok_embd = self.transformer.wte(idx)
+        pos_embd = self.transformer.wpe(pos)  # type: ignore
+        tok_embd = self.transformer.wte(idx)  # type: ignore
         x = tok_embd + pos_embd
-        for block in self.transformer.h:
+        for block in self.transformer.h:  # type: ignore
             x = block(x)
-        x = self.transformer.ln_f(x)
+        x = self.transformer.ln_f(x)  # type: ignore
         logits = self.lm_head(x)
         loss = None
         if targets is not None:
@@ -255,7 +255,16 @@ torch.manual_seed(1337)
 if device == "cuda":
     torch.cuda.manual_seed(1337)
 
-train_loader = DataloaderLite(B=16, T=512)
+# add batch size automloader
+total_batch_size = 524288
+B =16
+T = 512
+assert total_batch_size % (B*T) == 0
+grad_accum_steps = total_batch_size // (B*T)
+print(f"total desired batch size: {total_batch_size}")
+print(f">= calculated grad accum steps: {grad_accum_steps}")
+
+train_loader = DataloaderLite(B=B, T=T)
 
 #torch.set_float32_matmul_precision('high') # this is optional for A100
 
@@ -283,14 +292,19 @@ optimizer = model.configure_optimizers(weight_decay=0.1, learning_rate=6e-4, dev
 
 for step in range(50):
     t0 = time.time()
-    x, y = train_loader.next_batch()
-    x, y = x.to(device), y.to(device)
     optimizer.zero_grad()
-    with torch.autocast(device_type=device, dtype=torch.bfloat16):
-    # softmax, layernorm, adam... are set to BF16 while others are still TF32
-        logits, loss = model(x, y)
-        #import code; code.interact(local=locals()) # print logits.dtype --> get 'torch.float32'
-    loss.backward()
+    loss_accum = 0.0
+    for micro_step in range(grad_accum_steps):
+        x, y = train_loader.next_batch()
+        x, y = x.to(device), y.to(device)
+        with torch.autocast(device_type=device, dtype=torch.bfloat16):
+            # softmax, layernorm, adam... are set to BF16 while others are still TF32
+            logits, loss = model(x, y)
+            #import code; code.interact(local=locals()) # print logits.dtype --> get 'torch.float32'
+        # accumulate loss
+        loss = loss / grad_accum_steps
+        loss_accum += loss.detach()
+        loss.backward()
     # the length of the gradient norm is no more than 0.1
     norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
     lr = get_lr(step)
@@ -300,9 +314,9 @@ for step in range(50):
     torch.cuda.synchronize()
     t1 = time.time()
     dt = (t1 - t0)
-    tpkens_processed= train_loader.B*train_loader.T
+    tpkens_processed= train_loader.B * train_loader.T * grad_accum_steps
     tokens_per_sec = tpkens_processed / dt 
-    print(f"Step{step:4d} | loss: {loss.item():.6f} | norm: {norm:.4f} | time: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f}")
+    print(f"Step{step:4d} | loss: {loss_accum.item():.6f} | norm: {norm:.4f} | time: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f}") 
 
 
 
