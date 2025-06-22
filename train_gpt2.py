@@ -328,6 +328,7 @@ torch.set_float32_matmul_precision('high') # this is optional for A100
 model = GPT(GPTConfig(vocab_size = 50304))
 model.to(device)
 model = torch.compile(model)
+
 # DDP will synchronize the model parameters / gradients across all the processes
 # forward and backward are almost identical /unchanged for each process
 if ddp:
@@ -337,7 +338,7 @@ raw_model = model.module if ddp else model
 max_lr = 3e-4
 min_lr = max_lr * 0.1
 warmup_steps = 143 # 375e6 / 2**9 = 715
-max_steps = 3814 # log2(524288) = 19, 10e9 / 2**19 = 19073
+max_steps = 4 #3814 # log2(524288) = 19, 10e9 / 2**19 = 19073
 def get_lr(it):
     if it < warmup_steps:
         return max_lr * (it+1) / warmup_steps
@@ -352,10 +353,17 @@ def get_lr(it):
 #optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, betas=(0.9, 0.95), eps=1e-8)
 optimizer = model.configure_optimizers(weight_decay=0.1, learning_rate=6e-4, device=device)
 
-for step in range(50):
-    t0 = time.time()
+log_dir = 'log'
+os.makedirs(log_dir, exist_ok=True)
+log_file = os.path.join(log_dir, f"log_.txt")
+with open(log_file, "w") as f:
+    pass
 
-    if step % 20 == 0: # 100
+for step in range(max_steps):
+    t0 = time.time()
+    last_step = (step == max_steps - 1)
+
+    if step % 50 == 0 or last_step: # 100
         model.eval()
         val_loader.reset()
         with torch.no_grad():
@@ -374,7 +382,7 @@ for step in range(50):
         if master_process:
             print(f"Step{step:4d} | val_loss: {val_loss_accum.item():.4f}")
     
-    if  step % 20 == 0:
+    if  step % 50 == 0 or last_step:
         model.eval()
         num_return_sequences = 4
         max_length = 32
@@ -396,7 +404,7 @@ for step in range(50):
                 xgen = torch.cat((xgen, xcol), dim=1)
                 # this will generate 5x30
         if master_process:
-            with open("generated_samples.txt", "a") as f:
+            with open("log/generated_samples.txt", "a") as f:
                 f.write(f"\n--- Step {step} ---\n")
                 for i in range(num_return_sequences):
                     tokens = xgen[i, :max_length].tolist()
@@ -436,6 +444,34 @@ for step in range(50):
     tokens_per_sec = tpkens_processed / dt 
     if master_process:
         print(f"Step{step:4d} | loss: {loss_accum.item():.6f} | lr: {lr:.4e} | norm: {norm:.4f} | time: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f}") 
+        with open(log_file, "a") as f:
+            f.write(f"Step{step:4d} | loss: {loss_accum.item():.6f}\n")
+    
+    # Save model checkpoint every 500 steps
+    if step % 500 == 0 and master_process:
+        checkpoint = {
+            'step': step,
+            'model_state_dict': raw_model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'loss': loss_accum.item(),
+            'config': raw_model.config
+        }
+        checkpoint_path = os.path.join(log_dir, f'checkpoint_step_{step}.pt')
+        torch.save(checkpoint, checkpoint_path)
+        print(f"Saved checkpoint to {checkpoint_path}")
+
+# Save final model
+if master_process:
+    final_checkpoint = {
+        'step': max_steps,
+        'model_state_dict': raw_model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'loss': loss_accum.item(),
+        'config': raw_model.config
+    }
+    final_path = os.path.join(log_dir, 'final_model.pt')
+    torch.save(final_checkpoint, final_path)
+    print(f"Saved final model to {final_path}")
 
 
 
@@ -471,3 +507,20 @@ for i in range(num_return_sequences):
     decoded = enc.decode(tokens)
     print(">", decoded)
 # -----------------------------------------------------------------------------------------------------------
+
+def load_model_from_checkpoint(checkpoint_path, device='cuda'):
+    """Load a trained model from checkpoint"""
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+    
+    # Create model with saved config
+    model = GPT(checkpoint['config'])
+    model.load_state_dict(checkpoint['model_state_dict'])
+    model.to(device)
+    model.eval()
+    
+    print(f"Loaded model from step {checkpoint['step']} with loss {checkpoint['loss']:.6f}")
+    return model
+
+# Example usage:
+# model = load_model_from_checkpoint('log/final_model.pt', device='cuda')
+# model = load_model_from_checkpoint('log/checkpoint_step_1000.pt', device='cuda')
