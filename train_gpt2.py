@@ -304,6 +304,8 @@ torch.manual_seed(1337)
 if device == "cuda":
     torch.cuda.manual_seed(1337)
 
+enc = tiktoken.get_encoding("gpt2")
+
 # add batch size automloader
 total_batch_size = 524288
 B =8
@@ -320,7 +322,8 @@ if master_process:
 
 train_loader = DataloaderLite(B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size, split = 'train')
 val_loader = DataloaderLite(B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size, split = 'val')
-#torch.set_float32_matmul_precision('high') # this is optional for A100
+
+torch.set_float32_matmul_precision('high') # this is optional for A100
 
 model = GPT(GPTConfig(vocab_size = 50304))
 model.to(device)
@@ -370,6 +373,37 @@ for step in range(50):
             dist.all_reduce(val_loss_accum, op=dist.ReduceOp.AVG)
         if master_process:
             print(f"Step{step:4d} | val_loss: {val_loss_accum.item():.4f}")
+    
+    if  step % 20 == 0:
+        model.eval()
+        num_return_sequences = 4
+        max_length = 32
+        tokens = enc.encode("Hello, I'm a language model,")
+        tokens = torch.tensor(tokens, dtype=torch.long)
+        tokens = tokens.unsqueeze(0).repeat(num_return_sequences, 1)
+        xgen = tokens.to('cuda')
+        sample_rng = torch.Generator(device)
+        sample_rng.manual_seed(42 + ddp_rank)
+        while xgen.size(1) < max_length:
+            with torch.no_grad(): # not count backward pass
+                logits, loss = model(xgen)
+                logits = logits[:,-1,:] # (B, vocab_size)
+                probs = F.softmax(logits, dim=-1)
+                # top k sampling of 50, sampling only happen in top 50 to avoid werid tokens
+                topk_probs, topk_indices = torch.topk(probs, 50, dim=-1)
+                ix = torch.multinomial(topk_probs, num_samples=1)
+                xcol = torch.gather(topk_indices, dim=-1, index=ix)
+                xgen = torch.cat((xgen, xcol), dim=1)
+                # this will generate 5x30
+        if master_process:
+            with open("generated_samples.txt", "a") as f:
+                f.write(f"\n--- Step {step} ---\n")
+                for i in range(num_return_sequences):
+                    tokens = xgen[i, :max_length].tolist()
+                    decoded = enc.decode(tokens)
+                    sample_text = f"Sample {i} : {decoded}"
+                    #print(sample_text)
+                    f.write(sample_text + "\n")
     
     model.train()
     optimizer.zero_grad()
