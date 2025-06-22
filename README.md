@@ -13,8 +13,13 @@ Before training:
 for faster training:
 1. Add compiler
 2. Include Flash Attention
-3. Add dynamic learning rate (decay)
-4. Add decay to >= 2 dimension parameters for AdamW optimizer
+3. add norm
+4. Add dynamic learning rate (decay)
+5. Add decay to >= 2 dimension parameters for AdamW optimizer
+
+* add feature of expanding small batch size to equivalent of ~0.5M batch size from GPT2 paper while using small core GPU
+* Add DDP (Data distributed parallel) feature to enable parallel training on multiple GPU
 
 ## dataset
 https://github.com/karpathy/char-rnn/blob/master/data/tinyshakespeare/input.txt
+* other datasetes for LLM training: FineWeb_Edu
