@@ -411,13 +411,13 @@ for step in range(max_steps):
                     logits, loss = model(x, y)
                 loss = loss / val_loss_steps
                 val_loss_accum += loss.detach()
-                
+
         if ddp:
             dist.all_reduce(val_loss_accum, op=dist.ReduceOp.AVG)
         if master_process:
-            print(f"Step{step:4d} | val_loss: {val_loss_accum.item():.4f}")
+            print(f"Step{step:4d} | val_loss: {val_loss_accum.item():.4f} | time: {time.strftime("%H:%M:%S", time.localtime())}")
             with open(log_file, "a") as f:
-                f.write(f"{step} val {val_loss_accum.item():.4f}\n")
+                f.write(f"step {step} | val: {val_loss_accum.item():.4f} | time: {time.strftime("%H:%M:%S", time.localtime())}\n")
             with open("log/val_loss_history.txt", "a") as f:
                 f.write(f"{val_loss_accum:.6f}\n")
             if step > 0 and (step % 1000 == 0 or last_step):
@@ -464,7 +464,7 @@ for step in range(max_steps):
         if master_process:
             print(f"HellaSwag accuracy: {num_correct_norm}/{num_total}={acc_norm:.4f}")
             with open(log_file, "a") as f:
-                f.write(f"{step} hella {acc_norm:.4f}\n")
+                f.write(f"step {step} | hella: {acc_norm:.4f}\n")
             with open("log/acc_history.txt", "a") as f:
                 f.write(f"{acc_norm:.6f}\n")
     
@@ -530,9 +530,9 @@ for step in range(max_steps):
     tpkens_processed= train_loader.B * train_loader.T * grad_accum_steps * ddp_world_size
     tokens_per_sec = tpkens_processed / dt 
     if master_process:
-        print(f"Step{step:4d} | loss: {loss_accum.item():.6f} | lr: {lr:.4e} | norm: {norm:.4f} | time: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f}") 
+        print(f"Step {step:4d} | loss: {loss_accum.item():.6f} | lr: {lr:.4e} | norm: {norm:.4f} | time: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f}") 
         with open(log_file, "a") as f:
-            f.write(f"Step{step:4d} | loss: {loss_accum.item():.6f}\n")
+            f.write(f"Step {step:4d} | loss: {loss_accum.item():.6f}\n")
         with open("log/loss_history.txt", "a") as f:
             f.write(f"{loss_accum.item():.6f}\n")
 
