@@ -411,7 +411,7 @@ for step in range(max_steps):
                     logits, loss = model(x, y)
                 loss = loss / val_loss_steps
                 val_loss_accum += loss.detach()
-                val_loss_accum = val_loss_accum / val_loss_steps
+                
         if ddp:
             dist.all_reduce(val_loss_accum, op=dist.ReduceOp.AVG)
         if master_process:
