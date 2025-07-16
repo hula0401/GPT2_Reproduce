@@ -296,7 +296,9 @@ def get_most_likely_row(tokens, mask, logits):
 #model = GPT.from_pretrained('gpt2')
 #print('it works!')
 # -----------------------------------------------------------------------------------------------------------
-# Run the training loop
+# Set up DDP and device
+# prepare for dataloader, model, optimizer, etc.
+# parameters
 from torch.distributed import init_process_group, destroy_process_group
 from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.distributed as dist
@@ -361,10 +363,14 @@ if ddp:
     model = DDP(model, device_ids = [ddp_local_rank])
 raw_model = model.module if ddp else model
 
+# -----------------------------------------------------------------------------------------------------------
+# parameters
 max_lr = 3e-4
 min_lr = max_lr * 0.1
 warmup_steps = 143 # 375e6 / 2**9 = 715
-max_steps = 4 #3814 # log2(524288) = 19, 10e9 / 2**19 = 19073
+max_steps = 3814 #3814 # log2(524288) = 19, 10e9 / 2**19 = 19073
+eval_step = 75
+
 def get_lr(it):
     if it < warmup_steps:
         return max_lr * (it+1) / warmup_steps
@@ -385,12 +391,14 @@ log_file = os.path.join(log_dir, f"log_.txt")
 with open(log_file, "w") as f:
     pass
 
+# -----------------------------------------------------------------------------------------------------------
+# Start training
 for step in range(max_steps):
     t0 = time.time()
     last_step = (step == max_steps - 1)
 
     # evaluate loss
-    if step % 50 == 0 or last_step: # 100
+    if step % eval_step == 0 or last_step: # 100
         model.eval()
         val_loader.reset()
         with torch.no_grad():
@@ -410,7 +418,9 @@ for step in range(max_steps):
             print(f"Step{step:4d} | val_loss: {val_loss_accum.item():.4f}")
             with open(log_file, "a") as f:
                 f.write(f"{step} val {val_loss_accum.item():.4f}\n")
-            if step > 0 and (step % 5000 == 0 or last_step):
+            with open("log/val_loss_history.txt", "a") as f:
+                f.write(f"{val_loss_accum:.6f}\n")
+            if step > 0 and (step % 1000 == 0 or last_step):
                 # optionally write model checkpoints
                 checkpoint_path = os.path.join(log_dir, f"model_{step:05d}.pt")
                 checkpoint = {
@@ -424,7 +434,7 @@ for step in range(max_steps):
                 torch.save(checkpoint, checkpoint_path)
     
     # evaluate hellaswag -- benchmark
-    if (step % 50 == 0 or last_step) and (not use_compile):
+    if (step % eval_step == 0 or last_step) and (not use_compile):
         num_correct_norm = 0
         num_total = 0
         for i, example in enumerate(iterate_examples("val")):
@@ -455,9 +465,11 @@ for step in range(max_steps):
             print(f"HellaSwag accuracy: {num_correct_norm}/{num_total}={acc_norm:.4f}")
             with open(log_file, "a") as f:
                 f.write(f"{step} hella {acc_norm:.4f}\n")
+            with open("log/acc_history.txt", "a") as f:
+                f.write(f"{acc_norm:.6f}\n")
     
     # generate samples
-    if (step % 50 == 0 or last_step) and (not use_compile):
+    if (step % eval_step == 0 or last_step) and (not use_compile):
         model.eval()
         num_return_sequences = 4
         max_length = 32
@@ -521,6 +533,8 @@ for step in range(max_steps):
         print(f"Step{step:4d} | loss: {loss_accum.item():.6f} | lr: {lr:.4e} | norm: {norm:.4f} | time: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f}") 
         with open(log_file, "a") as f:
             f.write(f"Step{step:4d} | loss: {loss_accum.item():.6f}\n")
+        with open("log/loss_history.txt", "a") as f:
+            f.write(f"{loss_accum.item():.6f}\n")
 
 # Save final model
 if master_process:
