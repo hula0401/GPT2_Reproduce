@@ -367,6 +367,7 @@ raw_model = model.module if ddp else model
 # parameters
 max_lr = 3e-4
 min_lr = max_lr * 0.1
+# scale down to 20% of the whole datasets
 warmup_steps = 143 # 375e6 / 2**9 = 715
 max_steps = 3814 #3814 # log2(524288) = 19, 10e9 / 2**19 = 19073
 eval_step = 75
