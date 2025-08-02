@@ -11,11 +11,11 @@ Before training:
 
 After training:
 '''
-Sample 0 : Hello, I'm a language model, that has been shown in most cases on the web, the language will be the target language of general education. But,
-Sample 1 : Hello, I'm a language model, what is a picture on a computer is an embedded system, is that a computer's input is what's been asked to
-Sample 2 : Hello, I'm a language model, and using that model to model complex situations using the same model in three dimensions:
+> Hello, I'm a language model, that has been shown in most cases on the web, the language will be the target language of general education. But,
+> Hello, I'm a language model, what is a picture on a computer is an embedded system, is that a computer's input is what's been asked to
+> Hello, I'm a language model, and using that model to model complex situations using the same model in three dimensions:
 One of the most common examples is
-Sample 3 : Hello, I'm a language model, but you can find the default settings for an interface. In a previous tutorial on desktop computer, this is a default-
+> Hello, I'm a language model, but you can find the default settings for an interface. In a previous tutorial on desktop computer, this is a default-
 '''
 
 ## improvements
@@ -32,6 +32,7 @@ for faster training:
 
 ## dataset
 https://github.com/karpathy/char-rnn/blob/master/data/tinyshakespeare/input.txt
+
 * other datasetes for LLM training: FineWeb_Edu
 
 https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu
